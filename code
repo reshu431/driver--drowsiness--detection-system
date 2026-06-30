@@ -1,0 +1,242 @@
+#include <WiFi.h>
+#include <WebServer.h>
+#include <Wire.h>
+#include <MPU6050.h>
+
+const char* ssid = "harshi";
+const char* password = "11111111";
+
+WebServer server(80);aaaaaaa~~
+
+#define IR_SENSOR 13
+#define BUZZER 12
+#define LED 14
+
+int16_t ax, ay, az;
+
+String statusText = "Driver Awake";
+String eyeStatus = "Open";
+String tiltStatus = "Normal";
+
+unsigned long eyeClosedTime = 0;
+
+String webpage = R"rawliteral(
+<!DOCTYPE html>
+<html>
+<head>
+<title>Driver Drowsiness Detection</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+
+<style>
+
+body{
+font-family:Arial;
+background:linear-gradient(135deg,#141e30,#243b55);
+color:white;
+text-align:center;
+padding:20px;
+}
+
+.container{
+display:flex;
+flex-wrap:wrap;
+justify-content:center;
+gap:20px;
+}
+
+.box{
+background:white;
+color:black;
+padding:20px;
+width:250px;
+border-radius:15px;
+}
+
+.value{
+font-size:28px;
+font-weight:bold;
+}
+
+.alert{
+margin-top:30px;
+font-size:30px;
+color:yellow;
+font-weight:bold;
+}
+
+</style>
+</head>
+
+<body>
+
+<h1>ESP32 Driver Drowsiness Detection</h1>
+
+<div class="container">
+
+<div class="box">
+<h2>Eye Status</h2>
+<div class="value" id="eye">--</div>
+</div>
+
+<div class="box">
+<h2>Head Position</h2>
+<div class="value" id="tilt">--</div>
+</div>
+
+<div class="box">
+<h2>Driver Status</h2>
+<div class="value" id="status">--</div>
+</div>
+
+</div>
+
+<div class="alert" id="warning"></div>
+
+<script>
+
+setInterval(() => {
+
+fetch('/data')
+.then(response => response.json())
+.then(data => {
+
+document.getElementById('eye').innerHTML = data.eye;
+document.getElementById('tilt').innerHTML = data.tilt;
+document.getElementById('status').innerHTML = data.status;
+document.getElementById('warning').innerHTML = data.warning;
+
+});
+
+},1000);
+
+</script>
+
+</body>
+</html>
+)rawliteral";
+
+void handleRoot()
+{
+server.send(200, "text/html", webpage);
+}
+
+void handleData()
+{
+String json = "{";
+
+json += "\"eye\":\"" + eyeStatus + "\",";
+json += "\"tilt\":\"" + tiltStatus + "\",";
+json += "\"status\":\"" + statusText + "\",";
+
+if(statusText == "SLEEP DETECTED")
+json += "\"warning\":\"WARNING! DRIVER SLEEP DETECTED\"";
+else
+json += "\"warning\":\"Driver Safe\"";
+
+json += "}";
+
+server.send(200, "application/json", json);
+}
+
+void setup()
+{
+Serial.begin(115200);
+
+pinMode(IR_SENSOR, INPUT);
+pinMode(BUZZER, OUTPUT);
+pinMode(LED, OUTPUT);
+
+digitalWrite(BUZZER, LOW);
+digitalWrite(LED, LOW);
+
+Wire.begin();
+mpu.initialize();
+
+WiFi.begin(ssid, password);
+
+Serial.print("Connecting");
+
+while(WiFi.status() != WL_CONNECTED)
+{
+delay(500);
+Serial.print(".");
+}
+
+Serial.println("");
+Serial.println("WiFi Connected");
+
+// IP ADDRESS
+Serial.print("Open this IP in Browser: ");
+Serial.println(WiFi.localIP());
+
+server.on("/", handleRoot);
+server.on("/data", handleData);
+
+server.begin();
+
+Serial.println("Server Started");
+}
+
+void loop()
+{
+server.handleClient();
+
+bool sleepDetected = false;
+
+int eyeState = digitalRead(IR_SENSOR);
+
+mpu.getAcceleration(&ax, &ay, &az);
+
+
+// EYE DETECTION
+if(eyeState == LOW)
+{
+eyeStatus = "Closed";
+
+if(eyeClosedTime == 0)
+{
+eyeClosedTime = millis();
+}
+
+if(millis() - eyeClosedTime > 3000)
+{
+sleepDetected = true;
+}
+}
+else
+{
+eyeStatus = "Open";
+eyeClosedTime = 0;
+}
+
+
+// HEAD TILT
+if(ay < -12000)
+{
+tiltStatus = "Tilted";
+sleepDetected = true;
+}
+else
+{
+tiltStatus = "Normal";
+}
+
+
+// ALERT
+if(sleepDetected)
+{
+statusText = "SLEEP DETECTED";
+
+digitalWrite(BUZZER, HIGH);
+digitalWrite(LED, HIGH);
+}
+else
+{
+statusText = "Driver Awake";
+
+digitalWrite(BUZZER, LOW);
+digitalWrite(LED, LOW);
+}
+
+delay(100);
+}
